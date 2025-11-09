@@ -41,6 +41,8 @@ class AdbControllerConfig:
   # and adb_server_port will be used and supplied as an argument to all adb
   # commands.
   use_adb_server_port_from_os_env: bool = False
+  # Cloud emulator IP address (optional, for remote emulators).
+  cloud_ip: str | None = None
 
 
 @dataclasses.dataclass
@@ -138,6 +140,8 @@ class EmulatorLauncherConfig:
   emulator_console_port: int = 0
   # Port for gRPC communication with the emulator.
   grpc_port: int = 0
+  # Cloud emulator IP address (optional, for remote emulators).
+  cloud_ip: str | None = None
 
 
 @dataclasses.dataclass

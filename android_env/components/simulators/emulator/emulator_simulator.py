@@ -339,18 +339,42 @@ class EmulatorSimulator(base_simulator.BaseSimulator):
     """Connects to an emulator and returns a corresponsing stub."""
 
     logging.info('Creating gRPC channel to the emulator on port %r', grpc_port)
-    port = f'localhost:{grpc_port}'
+    # Use cloud IP if provided, otherwise use localhost
+    cloud_ip = getattr(self._config.emulator_launcher, 'cloud_ip', None)
+    if cloud_ip:
+      port = f'{cloud_ip}:{grpc_port}'
+      logging.info('Using cloud emulator IP: %s', cloud_ip)
+    else:
+      port = f'localhost:{grpc_port}'
     options = [('grpc.max_send_message_length', -1),
                ('grpc.max_receive_message_length', -1)]
-    creds = grpc.local_channel_credentials()
 
-    try:
-      self._channel = grpc.secure_channel(port, creds, options=options)
-      grpc.channel_ready_future(self._channel).result(timeout=timeout_sec)
-    except (grpc.RpcError, grpc.FutureTimeoutError) as grpc_error:
-      logging.exception('Failed to connect to the emulator.')
-      raise EmulatorBootError(
-          'Failed to connect to the emulator.') from grpc_error
+    # For cloud emulators, try insecure channel first, then secure
+    # For local emulators, use secure channel (original behavior)
+    if cloud_ip:
+      # Try insecure connection first for cloud emulators
+      try:
+        logging.info('Attempting insecure gRPC connection to %s', port)
+        self._channel = grpc.insecure_channel(port, options=options)
+        grpc.channel_ready_future(self._channel).result(timeout=timeout_sec)
+        logging.info('✅ Using insecure gRPC connection to %s', port)
+      except (grpc.RpcError, grpc.FutureTimeoutError) as insecure_error:
+        logging.info('⚠️ Insecure gRPC failed: %s, trying secure...', insecure_error)
+        # Fallback to secure channel
+        creds = grpc.local_channel_credentials()
+        self._channel = grpc.secure_channel(port, creds, options=options)
+        grpc.channel_ready_future(self._channel).result(timeout=timeout_sec)
+        logging.info('✅ Using secure gRPC connection to %s', port)
+    else:
+      # Local emulator: use secure channel (original behavior)
+      creds = grpc.local_channel_credentials()
+      try:
+        self._channel = grpc.secure_channel(port, creds, options=options)
+        grpc.channel_ready_future(self._channel).result(timeout=timeout_sec)
+      except (grpc.RpcError, grpc.FutureTimeoutError) as grpc_error:
+        logging.exception('Failed to connect to the emulator.')
+        raise EmulatorBootError(
+            'Failed to connect to the emulator.') from grpc_error
 
     logging.info('Added gRPC channel for the Emulator on port %s', port)
     emulator_controller_stub = (
