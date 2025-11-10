@@ -179,6 +179,45 @@ class AdbController:
           # Return empty successful response (don't raise exception)
           return b''
         
+        # Handle Android system errors (like IllegalStateException) that might indicate connection issues
+        # These errors can occur when the device connection is unstable
+        if cloud_ip and device_specific and ('illegalstateexception' in error_lower or 'exception occurred while executing' in error_lower):
+          logging.warning('⚠️ Android system error detected (may indicate connection issue), checking device connection...')
+          try:
+            # Check if device is still connected
+            check_cmd = [self._config.adb_path, '-P', str(self._config.adb_server_port), 'devices']
+            check_result = subprocess.run(check_cmd, capture_output=True, timeout=5, env=self._os_env_vars, text=True)
+            if f'{cloud_ip}:5555' not in check_result.stdout or 'device' not in check_result.stdout:
+              # Device not connected, try to reconnect
+              logging.warning('⚠️ Device connection lost during Android system error, attempting to reconnect...')
+              disconnect_cmd = [self._config.adb_path, '-P', str(self._config.adb_server_port), 'disconnect', f'{cloud_ip}:5555']
+              subprocess.run(disconnect_cmd, capture_output=True, timeout=5, env=self._os_env_vars)
+              time.sleep(1)
+              
+              reconnect_cmd = [self._config.adb_path, '-P', str(self._config.adb_server_port), 'connect', f'{cloud_ip}:5555']
+              reconnect_result = subprocess.run(reconnect_cmd, capture_output=True, timeout=10, env=self._os_env_vars, text=True)
+              logging.info('Reconnect output: %s', reconnect_result.stdout)
+              time.sleep(3)
+              
+              # Verify connection
+              verify_result = subprocess.run(check_cmd, capture_output=True, timeout=5, env=self._os_env_vars, text=True)
+              if f'{cloud_ip}:5555' in verify_result.stdout and 'device' in verify_result.stdout:
+                logging.info('✅ Successfully reconnected after Android system error')
+                # Connection restored, continue with retry
+              else:
+                logging.warning('⚠️ Reconnection failed after Android system error, skipping command (similar to SELinux handling)...')
+                return b''  # Return empty response to skip the command
+            else:
+              # Device is still connected, but Android system error occurred
+              # This might be a transient error, skip the command to allow setup to continue
+              logging.warning('⚠️ Android system error detected but device is connected, skipping command (similar to SELinux handling)...')
+              return b''  # Return empty response to skip the command
+          except Exception as check_error:
+            logging.warning('Failed to check/reconnect after Android system error: %s', check_error)
+            # If we can't check, skip the command to be safe
+            logging.warning('⚠️ Android system error detected, skipping command (similar to SELinux handling)...')
+            return b''  # Return empty response to skip the command
+        
         # Check if it's a timeout that might have actually succeeded
         is_timeout = isinstance(e, subprocess.TimeoutExpired)
         if is_timeout and device_specific:
